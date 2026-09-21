@@ -1,0 +1,69 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0). Leave empty for auto-increment.'
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Ensure offline assets
+        run: |
+          if [ ! -d public/vendor ]; then
+            echo "::error::缺少 public/vendor，请确认离线资源已提交。"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Package build output
+        run: zip -r html.zip html
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "RELEASE_TAG=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "RELEASE_TAG=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "RELEASE_TAG=release-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.RELEASE_TAG }}
+          name: Release ${{ steps.tag.outputs.RELEASE_TAG }}
+          body: |
+            Auto-built from commit ${{ github.sha }}.
+            Download `html.zip`, extract and deploy to any static server.
+            Note: full offline bundle (fonts + sdkjs) makes the zip large (~300MB+ compressed).
+          files: html.zip
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

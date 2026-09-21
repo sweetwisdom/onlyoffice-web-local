@@ -1,0 +1,14 @@
+# 依赖与构建
+node_modules/
+packages/oo-offline/node_modules/
+dist/
+html/
+html.zip
+
+# 系统 / 工具
+.DS_Store
+Thumbs.db
+*.log
+*.local
+.vscode/
+.idea/

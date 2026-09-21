@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>OnlyOffice</title>
+    <link rel="icon" href="./assets/favicon.ico" type="image/x-icon"/>
+    <script type="text/javascript" src="vendor/web-apps/apps/api/documents/api.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+        }
+
+        #editor {
+            width: 100%;
+            height: 100%;
+        }
+
+        .container {
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div id="editor"></div>
+</div>
+
+<script>
+    'use strict'
+
+    window.OO_FILE_STREAM_ONLY = true
+
+    const STREAM_FLAG_INTERVAL_MS = 200
+    const STREAM_FLAG_MAX_ATTEMPTS = 50
+    const DOWNLOAD_REVOKE_DELAY_MS = 1500
+
+    let docEditor = null
+    let pendingSave = null
+    let pendingOpenBuffer = null
+    let streamFallback = 'autosave'
+
+    function postToParent(message, transfer) {
+        if (window.parent === window) return
+        window.parent.postMessage(message, '*', transfer || [])
+    }
+
+    function setStreamOnlyFlag() {
+        const frame = document.querySelector('#editor iframe')
+        if (!frame || !frame.contentWindow) return false
+        frame.contentWindow.OO_FILE_STREAM_ONLY = true
+        return true
+    }
+
+    function onDocumentReady() {
+        postToParent({ type: 'onlyoffice-document-ready' })
+        let attempts = 0
+        const timer = setInterval(() => {
+            attempts += 1
+            if (setStreamOnlyFlag() || attempts > STREAM_FLAG_MAX_ATTEMPTS) clearInterval(timer)
+        }, STREAM_FLAG_INTERVAL_MS)
+    }
+
+    function triggerDownload(buffer, data) {
+        const blob = new Blob([buffer], { type: 'application/octet-stream' })
+        const href = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = href
+        link.download = data.fileName || `document.${data.fileType || 'docx'}`
+        document.body.appendChild(link)
+        link.click()
+        setTimeout(() => {
+            URL.revokeObjectURL(href)
+            link.remove()
+        }, DOWNLOAD_REVOKE_DELAY_MS)
+    }
+
+    function postSaveError(requestId, error) {
+        postToParent({
+            type: 'onlyoffice-saved',
+            requestId: requestId,
+            ok: false,
+            error: String((error && error.message) || error)
+        })
+    }
+
+    function errorMessageOf(error) {
+        return String((error && error.message) || error)
+    }
+
+    function postOpenError(error) {
+        postToParent({
+            type: 'onlyoffice-open-error',
+            error: errorMessageOf(error)
+        })
+    }
+
+    function openPendingBinaryDocument() {
+        if (!pendingOpenBuffer) return
+        if (!docEditor) throw new Error('编辑器未就绪')
+        const buffer = pendingOpenBuffer
+        docEditor.openDocument({ buffer: buffer })
+        pendingOpenBuffer = null
+    }
+
+    function onAppReady() {
+        try {
+            openPendingBinaryDocument()
+        } catch (error) {
+            postOpenError(error)
+            throw error
+        }
+    }
+
+    function handleFileStream(data) {
+        const request = pendingSave
+        pendingSave = null
+        const buffer = data && data.buffer
+        if (!buffer) {
+            postSaveError(request && request.requestId, '未获取到文件流')
+            return
+        }
+        if (!request && streamFallback === 'download') {
+            triggerDownload(buffer, data)
+            return
+        }
+        postToParent({
+            type: 'onlyoffice-saved',
+            requestId: request && request.requestId,
+            ok: true,
+            buffer: buffer,
+            fileType: data.fileType || '',
+            fileName: data.fileName || ''
+        }, [buffer])
+    }
+
+    function handleSaveCommand(data) {
+        if (!docEditor) {
+            postSaveError(data && data.requestId, '编辑器未就绪')
+            return
+        }
+        setStreamOnlyFlag()
+        pendingSave = { requestId: data && data.requestId, format: data && data.format }
+        try {
+            if (data && data.format) docEditor.downloadAs(data.format)
+            else docEditor.downloadAs()
+        } catch (error) {
+            const requestId = pendingSave && pendingSave.requestId
+            pendingSave = null
+            postSaveError(requestId, error)
+        }
+    }
+
+    function onEditorError(event) {
+        const message = `编辑器错误: ${JSON.stringify(event && event.data)}`
+        if (!pendingSave) {
+            postOpenError(message)
+            return
+        }
+        const requestId = pendingSave.requestId
+        pendingSave = null
+        postSaveError(requestId, message)
+    }
+
+    function onRequestClose() {
+        postToParent({ type: 'onlyoffice-request-close' })
+    }
+
+    function onDocStateChange(event) {
+        postToParent({ type: 'onlyoffice-state-change', modified: !!(event && event.data) })
+    }
+
+    function onMetaChange(event) {
+        const title = event && event.data && event.data.title
+        if (title) postToParent({ type: 'onlyoffice-rename', title: title })
+    }
+
+    function onRequestRename(event) {
+        const data = event && event.data
+        const title = typeof data === 'string' ? data : data && (data.title || data.name)
+        if (!title) return
+        if (docEditor && docEditor.setMetaData) docEditor.setMetaData({ title: title })
+        postToParent({ type: 'onlyoffice-rename', title: title })
+    }
+
+    function postSaveAsError(error) {
+        postToParent({
+            type: 'onlyoffice-saveas',
+            ok: false,
+            error: String((error && error.message) || error)
+        })
+    }
+
+    function onRequestSaveAs(event) {
+        const data = event && event.data
+        const url = typeof data === 'string' ? data : data && (data.url || data.fileUrl)
+        const fileType = data && data.fileType || ''
+        if (!url) {
+            postSaveAsError('onRequestSaveAs 未返回文件地址')
+            return
+        }
+        fetch(url)
+            .then(response => {
+                if (!response.ok) throw new Error(`下载失败 HTTP ${response.status}`)
+                return response.arrayBuffer()
+            })
+            .then(buffer => postToParent({
+                type: 'onlyoffice-saveas',
+                ok: true,
+                buffer: buffer,
+                fileType: fileType
+            }, [buffer]))
+            .catch(postSaveAsError)
+    }
+
+    function detectDocumentType(fileType) {
+        const normalized = (fileType || '').toLowerCase()
+        const cell = ['xls', 'xlsx', 'xlsm', 'xlt', 'xltx', 'xltm', 'ods', 'fods', 'csv']
+        const slide = ['ppt', 'pptx', 'pptm', 'pot', 'potx', 'potm', 'odp', 'fodp', 'pps', 'ppsx']
+        const pdf = ['pdf', 'oxps', 'xps']
+        if (cell.includes(normalized)) return 'cell'
+        if (slide.includes(normalized)) return 'slide'
+        if (pdf.includes(normalized)) return 'pdf'
+        return 'word'
+    }
+
+    function detectFileTypeFromUrl(url) {
+        if (!url) return ''
+        const clean = url.split('?')[0].split('#')[0]
+        const dot = clean.lastIndexOf('.')
+        return dot > -1 ? clean.substring(dot + 1).toLowerCase() : ''
+    }
+
+    function hashCode(value) {
+        let hash = 0
+        for (let index = 0; index < value.length; index += 1) {
+            hash = (hash << 5) - hash + value.charCodeAt(index)
+            hash |= 0
+        }
+        return hash
+    }
+
+    function normalizeConfig(docConfig) {
+        const config = docConfig || {}
+        config.document = config.document || {}
+        if (!config.document.fileType) {
+            config.document.fileType = detectFileTypeFromUrl(config.document.url)
+        }
+        if (!config.documentType) {
+            config.documentType = detectDocumentType(config.document.fileType)
+        }
+        // 离线无 Document Server：pdf 未声明 isForm 时 api.js 会走 common 加载器（需服务器判定表单），
+        // 显式设为 false 直接进入 pdfeditor
+        if (config.documentType === 'pdf' && config.document.isForm === undefined) {
+            config.document.isForm = false
+        }
+        if (!config.document.key) {
+            config.document.key = 'doc-' + Math.abs(hashCode(
+                `${config.document.url || ''}|${config.document.title || ''}`
+            ))
+        }
+        if (!config.document.title) {
+            config.document.title = `文档.${config.document.fileType || 'docx'}`
+        }
+        if (!config.document.directUrl && config.document.url) {
+            config.document.directUrl = config.document.url
+        }
+        if (config.height == null) config.height = '100%'
+        if (config.width == null) config.width = '100%'
+        return config
+    }
+
+    function configureBinaryOpen(config, openBuffer) {
+        pendingOpenBuffer = null
+        if (!config.localOpenFromBinary) return
+        if (!openBuffer) throw new Error('本地文档缺少二进制内容')
+        pendingOpenBuffer = openBuffer
+    }
+
+    function loadOnlyoffice(docConfig, openBuffer) {
+        if (docEditor) docEditor.destroyEditor()
+        pendingSave = null
+        streamFallback = docConfig && docConfig.streamFallback || 'autosave'
+        if (docConfig) delete docConfig.streamFallback
+        const config = normalizeConfig(docConfig)
+        configureBinaryOpen(config, openBuffer)
+        config.events = config.events || {}
+        config.events.onAppReady = onAppReady
+        config.events.onDocumentReady = onDocumentReady
+        config.events.onDownloadAs = function () {}
+        config.events.onError = onEditorError
+        config.events.onRequestClose = onRequestClose
+        config.events.onDocumentStateChange = onDocStateChange
+        config.events.onMetaChange = onMetaChange
+        config.events.onRequestRename = onRequestRename
+        config.events.onRequestSaveAs = onRequestSaveAs
+        docEditor = new DocsAPI.DocEditor('editor', config)
+    }
+
+    function getUrlParams() {
+        const params = {}
+        new URLSearchParams(window.location.search).forEach((value, key) => {
+            params[key] = value
+        })
+        return params
+    }
+
+    function handleMessage(event) {
+        const data = event.data
+        if (!data) return
+        if (data.type === 'onlyoffice-config' && data.docConfig) {
+            const config = typeof data.docConfig === 'string' ? JSON.parse(data.docConfig) : data.docConfig
+            try {
+                loadOnlyoffice(config, data.openBuffer)
+            } catch (error) {
+                postOpenError(error)
+                throw error
+            }
+            return
+        }
+        if (data.type === 'onlyoffice-save') {
+            handleSaveCommand(data)
+            return
+        }
+        if (data.type === 'onlyoffice-file-stream') {
+            handleFileStream(data)
+        }
+    }
+
+    function init() {
+        if (typeof DocsAPI === 'undefined') {
+            alert('OnlyOffice API 未加载，请检查文档服务器地址')
+            return
+        }
+        const params = getUrlParams()
+        if (params.docConfig) {
+            loadOnlyoffice(JSON.parse(params.docConfig))
+            return
+        }
+        postToParent({ type: 'onlyoffice-ready' })
+    }
+
+    window.addEventListener('message', handleMessage)
+    window.addEventListener('load', init)
+</script>
+</body>
+</html>
