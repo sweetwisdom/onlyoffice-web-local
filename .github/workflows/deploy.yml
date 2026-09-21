@@ -5,23 +5,27 @@ on:
     branches:
       - main  # 当 main 分支有 push 时触发
 
+# GITHUB_TOKEN 默认只有 Contents: read，推送 gh-pages 分支与创建 Release 需要写权限
+permissions:
+  contents: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest  # 使用最新版本的 Ubuntu 作为运行环境
     steps:
       # 第一步：检出仓库代码
       - name: 拉取代码
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
 
       # 第二步：设置 Node.js 环境
       - name: 设置 Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v5
         with:
           node-version: 20  # 指定 Node.js 版本
 
       # 第三步：安装 pnpm（版本 10）
       - name: 设置 pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v6
         with:
           version: 10
           run_install: false  # 不自动安装依赖，下一步手动执行
@@ -55,7 +59,7 @@ jobs:
 
       # 第十步：创建 GitHub Release 并上传压缩包
       - name: 发布 Release 并上传构建包
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: release-${{ github.run_number }}  # 每次构建使用唯一的 tag
           name: Release ${{ github.run_number }}      # Release 名称

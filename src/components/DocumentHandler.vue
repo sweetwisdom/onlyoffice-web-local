@@ -1,11 +1,11 @@
 <template>
-    <div class="editor-container" v-loaing="loading" element-loading-text="Loading...">
+    <div class="editor-container" v-loading="loading" element-loading-text="Loading...">
         <div id="iframe"></div>
     </div>
 </template>
 
 <script lang="ts" setup>
-import { onMounted, onBeforeUnmount, ref, watchEffect, watch } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { getDocumentType, DocmentType } from '@/utils/util'
 import { g_sEmpty_bin } from '@/utils/empty_bin'
 // @ts-ignore
@@ -16,7 +16,6 @@ import {
     convertBinToDocumentAndDownload,
     c_oAscFileType2,
 } from '@/utils/x2t'
-const X2T = ref(null)
 // 设置prop
 const props = defineProps<{
     file: DocmentType
@@ -28,6 +27,9 @@ const loading = ref(false)
 // 全局 media 映射对象
 const media: { [key: string]: string } = {}
 
+// 文件监听停止函数（在顶层 onBeforeUnmount 中调用，避免异步上下文注册生命周期钩子的警告）
+let stopFileWatch: (() => void) | null = null
+
 onMounted(async () => {
     loading.value = true
     try {
@@ -37,11 +39,10 @@ onMounted(async () => {
         await initX2T()
         console.log('app has loading')
         loading.value = false
-        // 页面初始化后，使用 watchEffect 监听 props.file 并执行 openFile
-        // 添加props.file监听
+        // 监听 props.file 变化并执行 openFile
 
-        const stopWatch = watch(
-            () => props.file.fileName,
+        stopFileWatch = watch(
+            () => [props.file.fileName, props.file.file],
             async () => {
                 try {
                     await openFile()
@@ -52,16 +53,17 @@ onMounted(async () => {
             },
             { immediate: true }, // 立即执行一次以处理初始值
         )
-
-        // 组件卸载时停止监听
-        onBeforeUnmount(stopWatch)
     } catch (error) {
         console.error('Failed to initialize editor:', error)
         // 错误已在各函数中处理
     }
 })
 // 合并后的文件操作方法
-async function handleDocumentOperation(options: { isNew: boolean; fileName: string; file?: File }) {
+async function handleDocumentOperation(options: {
+    isNew: boolean
+    fileName: string
+    file?: File | null
+}) {
     try {
         const { isNew, fileName, file } = options
         const fileType = fileName.split('.').pop() || ''
@@ -69,7 +71,7 @@ async function handleDocumentOperation(options: { isNew: boolean; fileName: stri
 
         // 获取文档内容
         let documentData: {
-            bin: ArrayBuffer
+            bin: Uint8Array | string
             media?: any
         }
 
@@ -104,7 +106,7 @@ async function handleDocumentOperation(options: { isNew: boolean; fileName: stri
 function createEditorInstance(config: {
     fileName: string
     fileType: string
-    binData: ArrayBuffer
+    binData: Uint8Array | string
     media?: any
 }) {
     // 清理旧编辑器实例
@@ -113,7 +115,20 @@ function createEditorInstance(config: {
         editor.value = null
     }
 
-    const { fileName, fileType, binData, media } = config
+    // 切换文档：释放旧 media 的对象 URL 并清空映射，避免残留资源污染新文档
+    Object.values(media).forEach((url) => {
+        if (typeof url === 'string' && url.startsWith('blob:')) {
+            URL.revokeObjectURL(url)
+        }
+    })
+    Object.keys(media).forEach((key) => delete media[key])
+
+    const { fileName, fileType, binData, media: docMedia } = config
+
+    // 记录文档解包出的 media（保存时需写回 x2t 虚拟文件系统，否则图片丢失）
+    if (docMedia) {
+        Object.assign(media, docMedia)
+    }
 
     editor.value = new window.DocsAPI.DocEditor('iframe', {
         document: {
@@ -146,7 +161,7 @@ function createEditorInstance(config: {
         events: {
             onAppReady: () => {
                 // 设置媒体资源
-                if (media) {
+                if (Object.keys(media).length > 0) {
                     editor.value.sendCommand({
                         command: 'asc_setImageUrls',
                         data: { urls: media },
@@ -182,6 +197,10 @@ async function openFile() {
 }
 
 onBeforeUnmount(() => {
+    // 停止文件监听
+    stopFileWatch?.()
+    stopFileWatch = null
+
     // 清理资源
     if (editor.value) {
         // 如果编辑器有销毁方法，调用它
@@ -214,49 +233,49 @@ function loadEditorApi(): Promise<void> {
 
 interface SaveEvent {
     data: {
-        data: string
+        data: string | Uint8Array
         option: any
     }
+}
+
+// 辅助函数：将base64字符串转为Uint8Array（兼容 data URI 前缀）
+function base64ToUint8Array(base64: string): Uint8Array {
+    const payload = base64.includes(',') ? base64.split(',')[1] : base64
+    const binaryString = atob(payload)
+    const bytes = new Uint8Array(binaryString.length)
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+    }
+    return bytes
 }
 
 async function handleSaveDocument(event: SaveEvent) {
     console.log('Save document event:', event)
 
-    if (event.data && event.data.data) {
-        const { data, option } = event.data
-        console.log(data, 'data')
-        debugger
-        // 创建下载
-        await convertBinToDocumentAndDownload(
-            data.data,
-            props.file.fileName,
-            c_oAscFileType2[option.outputformat],
-        )
-        // const blob = dataURItoBlob(data);
-        // saveAs(blob, props.file.fileName);
+    try {
+        if (event.data && event.data.data) {
+            const { data, option } = event.data
+
+            // onSave 载荷为 base64 字符串（nobase64=false），转换为二进制后再交给 x2t 转换
+            const binData = typeof data === 'string' ? base64ToUint8Array(data) : data
+
+            // 根据输出格式获取扩展名，找不到时回退为源文件扩展名
+            const sourceExt = props.file.fileName.split('.').pop()?.toUpperCase() || 'DOCX'
+            const targetExt = c_oAscFileType2[option?.outputformat] || sourceExt
+
+            // 创建下载（传入 media，图片等资源会写回 x2t 虚拟文件系统）
+            await convertBinToDocumentAndDownload(binData, props.file.fileName, targetExt, media)
+        }
+    } catch (error) {
+        console.error('保存文档失败:', error)
+        alert('文档保存失败，请重试')
+    } finally {
+        // 无论成功失败都需告知编辑器保存结束，否则编辑器会一直处于保存锁定状态
+        editor.value?.sendCommand({
+            command: 'asc_onSaveCallback',
+            data: { err_code: 0 },
+        })
     }
-
-    // 告知编辑器保存完成
-    editor.value.sendCommand({
-        command: 'asc_onSaveCallback',
-        data: { err_code: 0 },
-    })
-}
-
-// 辅助函数：将base64转为Blob
-function dataURItoBlob(dataURI: string): Blob {
-    // 从base64字符串中提取数据部分
-    const byteString = atob(dataURI.split(',')[1])
-
-    // 创建ArrayBuffer
-    const ab = new ArrayBuffer(byteString.length)
-    const ia = new Uint8Array(ab)
-
-    for (let i = 0; i < byteString.length; i++) {
-        ia[i] = byteString.charCodeAt(i)
-    }
-
-    return new Blob([ab])
 }
 
 /**
@@ -264,7 +283,6 @@ function dataURItoBlob(dataURI: string): Blob {
  * @param event - OnlyOffice 编辑器的文件写入事件
  */
 function handleWriteFile(event: any) {
-    debugger
     try {
         console.log('Write file event:', event)
 
@@ -317,17 +335,18 @@ function handleWriteFile(event: any) {
                 imgName: fileName,
             },
         })
-        console.log(`Successfully processed image: ${fileName}, URL: ${media}`)
+        console.log(`Successfully processed image: ${fileName}, URL: ${objectUrl}`)
     } catch (error) {
         console.error('Error handling writeFile:', error)
 
         // 通知编辑器文件处理失败
+        const errorMessage = error instanceof Error ? error.message : String(error)
         if (editor.value && typeof editor.value.sendCommand === 'function') {
             editor.value.sendCommand({
                 command: 'asc_writeFileCallback',
                 data: {
                     success: false,
-                    error: error.message,
+                    error: errorMessage,
                 },
             })
         }
@@ -335,7 +354,7 @@ function handleWriteFile(event: any) {
         if (event.callback && typeof event.callback === 'function') {
             event.callback({
                 success: false,
-                error: error.message,
+                error: errorMessage,
             })
         }
     }

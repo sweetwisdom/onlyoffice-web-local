@@ -74,6 +74,8 @@ const onOpenDocument = async () => {
   const input = document.createElement('input')
   input.type = 'file'
   input.accept = '.docx,.xlsx,.pptx,.doc,.xls,.ppt'
+  // 挂载到 DOM（部分浏览器如 Safari iOS 对未挂载的 input 不触发文件选择）
+  input.style.display = 'none'
 
   input.onchange = (event) => {
     const file = (event.target as HTMLInputElement).files?.[0]
@@ -84,8 +86,11 @@ const onOpenDocument = async () => {
         file: file,
       }
     }
+    // 选择完成后移除
+    input.remove()
   }
 
+  document.body.appendChild(input)
   input.click()
 }
 // 页面初始化后根据路由地址获取文件 并自动打开
@@ -141,7 +146,6 @@ async function initFileUrl() {
     }
 
     const file = new File([blob], fileName, { type: blob.type })
-    debugger
     docmentObj.value = { fileName, file }
     showCreateDialog.value = false
   } catch (err) {

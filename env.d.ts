@@ -10,3 +10,8 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv
 }
+
+// OnlyOffice 本地编辑器 API（./web-apps/apps/api/documents/api.js 动态加载）
+interface Window {
+  DocsAPI: any
+}

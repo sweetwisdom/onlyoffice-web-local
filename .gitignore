@@ -1,33 +1,54 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# ===== 以 . 开头的非必要文件 / 文件夹（必要项除外） =====
+.*
+!.gitignore
+!.gitattributes
+!.github/
+!.dockerignore
+!.env.example
 
-node_modules
-.DS_Store
-dist
-dist-ssr
-coverage
-*.local
-
-/cypress/videos/
-/cypress/screenshots/
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
-*.tsbuildinfo
-html
+# ===== 测试 / 覆盖率产物 =====
+coverage/
+htmlcov/
 test-results/
 playwright-report/
+cypress/screenshots/
+cypress/videos/
+
+# ===== 构建产物 =====
+build/
+dist/
+dist-ssr/
+out/
+bin/
+*.tsbuildinfo
+*.local
+html/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+venv/
+
+# ===== Node =====
+node_modules/
+
+# ===== 日志 =====
+*.log
+logs/
+
+# ===== 操作系统 =====
+Thumbs.db
+ehthumbs.db
+
+# ===== 项目专属（编译产物 / 自动生成声明 / 测试残留） =====
+*.js.map
+*.vue.js
+src/**/*.js
+vite.config.js
+auto-imports.d.ts
+components.d.ts
+e2e/
+tests/*.png
+tests/*.docx

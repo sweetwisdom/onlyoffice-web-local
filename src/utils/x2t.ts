@@ -4,6 +4,7 @@ interface EmscriptenFileSystem {
     readdir(path: string): string[]
     readFile(path: string, options?: { encoding: 'binary' }): Uint8Array
     writeFile(path: string, data: Uint8Array | string): void
+    unlink(path: string): void
 }
 
 interface EmscriptenModule {
@@ -277,6 +278,32 @@ class X2TConverter {
     }
 
     /**
+     * 清理上一次转换残留的文件，避免旧文件（尤其是 media）污染新文档
+     */
+    private cleanWorkingDir(): void {
+        if (!this.x2tModule) return
+
+        const dirs = ['/working', '/working/media']
+        dirs.forEach((dir) => {
+            try {
+                const files = this.x2tModule!.FS.readdir(dir)
+                files
+                    .filter((file) => file !== '.' && file !== '..')
+                    .forEach((file) => {
+                        try {
+                            // 目录（如 media/fonts/themes）unlink 会抛错，直接忽略
+                            this.x2tModule!.FS.unlink(`${dir}/${file}`)
+                        } catch {
+                            // 忽略目录或不可删除的文件
+                        }
+                    })
+            } catch (error) {
+                console.warn(`Failed to clean directory ${dir}:`, error)
+            }
+        })
+    }
+
+    /**
      * 将文档转换为 bin 格式
      */
     async convertDocument(file: File): Promise<ConversionResult> {
@@ -287,6 +314,9 @@ class X2TConverter {
         const documentType = this.getDocumentType(fileExt)
 
         try {
+            // 清理上一次转换的残留文件
+            this.cleanWorkingDir()
+
             // 读取文件内容
             const arrayBuffer = await file.arrayBuffer()
             const data = new Uint8Array(arrayBuffer)
@@ -324,26 +354,54 @@ class X2TConverter {
     }
 
     /**
+     * 将 media 资源（blob URL）写入虚拟文件系统的 /working/media/，
+     * 使 bin 转换回文档时能引用到图片等资源
+     */
+    private async writeMediaToFS(media?: Record<string, string>): Promise<void> {
+        if (!media || !this.x2tModule) return
+
+        for (const [key, url] of Object.entries(media)) {
+            if (typeof url !== 'string' || !url.startsWith('blob:')) continue
+            try {
+                const fileName = key.replace(/^media\//, '')
+                const res = await fetch(url)
+                const buf = new Uint8Array(await res.arrayBuffer())
+                this.x2tModule!.FS.writeFile(`/working/media/${fileName}`, buf)
+            } catch (error) {
+                console.warn(`Failed to write media file ${key} to FS:`, error)
+            }
+        }
+    }
+
+    /**
      * 将 bin 格式转换为指定格式并下载
      */
     async convertBinToDocumentAndDownload(
-        bin: Uint8Array,
+        bin: Uint8Array | string,
         originalFileName: string,
-        targetExt = 'DOCX',
+        targetExt?: string,
+        media?: Record<string, string>,
     ): Promise<BinConversionResult> {
         await this.initialize()
 
+        // 未指定目标格式时，回退为源文件的扩展名
+        const sourceExt = originalFileName.split('.').pop()?.toLowerCase() || 'docx'
+        const ext = (targetExt || sourceExt).toLowerCase()
+
         const sanitizedBase = this.sanitizeFileName(originalFileName).replace(/\.[^/.]+$/, '')
         const binFileName = `${sanitizedBase}.bin`
-        const outputFileName = `${sanitizedBase}.${targetExt.toLowerCase()}`
+        const outputFileName = `${sanitizedBase}.${ext}`
 
         try {
+            // 先将图片等 media 资源写入虚拟文件系统，否则转换结果中图片会丢失
+            await this.writeMediaToFS(media)
+
             // 写入 bin 文件
             this.x2tModule!.FS.writeFile(`/working/${binFileName}`, bin)
 
             // 创建转换参数
             let additionalParams = ''
-            if (targetExt === 'PDF') {
+            if (ext === 'pdf') {
                 additionalParams = '<m_sFontDir>/working/fonts/</m_sFontDir>'
             }
 
@@ -363,7 +421,7 @@ class X2TConverter {
 
             // 下载文件
             // TODO: 完善打印功能
-            this.saveWithFileSystemAPI(result, outputFileName)
+            await this.saveWithFileSystemAPI(result, outputFileName)
 
             return {
                 fileName: outputFileName,
@@ -521,10 +579,11 @@ export const initX2TScript = () => x2tConverter.loadScript()
 export const initX2T = () => x2tConverter.initialize()
 export const convertDocument = (file: File) => x2tConverter.convertDocument(file)
 export const convertBinToDocumentAndDownload = (
-    bin: Uint8Array,
+    bin: Uint8Array | string,
     fileName: string,
     targetExt?: string,
-) => x2tConverter.convertBinToDocumentAndDownload(bin, fileName, targetExt)
+    media?: Record<string, string>,
+) => x2tConverter.convertBinToDocumentAndDownload(bin, fileName, targetExt, media)
 
 // 文件类型常量
 export const oAscFileType = {

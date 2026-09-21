@@ -19,7 +19,7 @@
         "types": ["element-plus/global"],
         "lib": ["esnext", "dom", "dom.iterable", "scripthost"]
     },
-    "include": ["**/*.ts", "**/*.tsx", "**/*.vue", "tests/**/*.ts", "tests/**/*.tsx"],
+    "include": ["**/*.ts", "**/*.tsx", "**/*.vue"],
     "exclude": ["node_modules", "public", "web-apps", "dist"]
 }
 
