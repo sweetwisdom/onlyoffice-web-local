@@ -41,11 +41,10 @@ function hookDownloadInFrame(frame: HTMLIFrameElement): boolean {
       let buffer: ArrayBuffer
       if (data instanceof ArrayBuffer) {
         buffer = data.slice(0)
-      } else if (data && (data as Uint8Array).buffer) {
-        const u8 = data as Uint8Array
-        buffer = u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength)
       } else {
-        buffer = new Uint8Array(data as ArrayBufferView).buffer
+        const copy = new Uint8Array(data.byteLength)
+        copy.set(data)
+        buffer = copy.buffer
       }
       const ext = String(fileName || '').split('.').pop() || ''
       const payload = {

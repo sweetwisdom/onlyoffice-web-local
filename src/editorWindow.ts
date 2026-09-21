@@ -38,10 +38,11 @@ export interface EditorWindowSession {
 let saveSeq = 0
 
 export function openEditorInNewWindow(options: OpenInWindowOptions): EditorWindowSession {
-  const win = window.open('/onlyoffice.html', `oo-editor-${Date.now()}`)
-  if (!win) {
+  const openedWindow = window.open('/onlyoffice.html', `oo-editor-${Date.now()}`)
+  if (!openedWindow) {
     throw new Error('无法打开新窗口（请允许弹窗，或用系统 Chrome 打开本页后再试）')
   }
+  const win = openedWindow
 
   let blobUrl = ''
   let disposed = false

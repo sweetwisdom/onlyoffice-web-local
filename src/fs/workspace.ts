@@ -98,15 +98,16 @@ export async function listOfficeFiles(
   const files: WorkspaceFile[] = []
   for await (const [name, handle] of dir.entries()) {
     if (handle.kind !== 'file') continue
+    const fileHandle = handle as FileSystemFileHandle
     const fileType = extOf(name)
     if (!OFFICE_EXTS.has(fileType)) continue
-    const file = await handle.getFile()
+    const file = await fileHandle.getFile()
     files.push({
       name,
       fileType,
       lastModified: file.lastModified,
       size: file.size,
-      handle
+      handle: fileHandle
     })
   }
   files.sort((a, b) => b.lastModified - a.lastModified)
@@ -156,16 +157,6 @@ declare global {
       name: string,
       options?: { create?: boolean }
     ) => Promise<FileSystemFileHandle>
-  }
-
-  interface FileSystemFileHandle {
-    getFile: () => Promise<File>
-    createWritable: () => Promise<FileSystemWritableFileStream>
-  }
-
-  interface FileSystemWritableFileStream extends WritableStream {
-    write: (data: BufferSource | Blob | string) => Promise<void>
-    close: () => Promise<void>
   }
 
   type FileSystemPermissionMode = 'read' | 'readwrite'
