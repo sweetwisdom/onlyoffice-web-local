@@ -9,6 +9,7 @@ import {
   supportsFileSystemAccess,
   type WorkspaceFile
 } from './fs/workspace'
+import { LanguageSwitcher, useLocale } from './i18n'
 import { setPendingDoc } from './pendingDoc'
 
 function formatSize(bytes: number): string {
@@ -18,15 +19,16 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`
 }
 
-const NEW_TYPES: { ext: 'docx' | 'xlsx' | 'pptx' | 'pdf'; label: string; cls: string }[] = [
-  { ext: 'docx', label: '文档', cls: 'word' },
-  { ext: 'xlsx', label: '电子表格', cls: 'cell' },
-  { ext: 'pptx', label: '演示文稿', cls: 'slide' },
-  { ext: 'pdf', label: 'PDF', cls: 'pdf' }
+const NEW_TYPES: { ext: 'docx' | 'xlsx' | 'pptx' | 'pdf'; key: 'typeWord' | 'typeCell' | 'typeSlide' | 'typePdf'; cls: string }[] = [
+  { ext: 'docx', key: 'typeWord', cls: 'word' },
+  { ext: 'xlsx', key: 'typeCell', cls: 'cell' },
+  { ext: 'pptx', key: 'typeSlide', cls: 'slide' },
+  { ext: 'pdf', key: 'typePdf', cls: 'pdf' }
 ]
 
 export function HomePage(props: { navigate: (to: string) => void }) {
   const { navigate } = props
+  const { t } = useLocale()
   const fsOk = useMemo(() => supportsFileSystemAccess(), [])
   const [dir, setDir] = useState<FileSystemDirectoryHandle | null>(null)
   const [needAuth, setNeedAuth] = useState(false)
@@ -66,7 +68,7 @@ export function HomePage(props: { navigate: (to: string) => void }) {
 
   function openNew(ext: 'docx' | 'xlsx' | 'pptx' | 'pdf') {
     setPendingDoc({
-      title: `新建文档.${ext}`,
+      title: `${t('newDocTitle')}.${ext}`,
       fileType: ext,
       buffer: null,
       ephemeral: true
@@ -97,7 +99,7 @@ export function HomePage(props: { navigate: (to: string) => void }) {
       })
       navigate(`/editor?open=${file.fileType}`)
     } catch (e) {
-      setError(`打开失败：${(e as Error)?.message || e}`)
+      setError(`${t('openFailed')}${(e as Error)?.message || e}`)
     }
   }
 
@@ -108,7 +110,7 @@ export function HomePage(props: { navigate: (to: string) => void }) {
       setDir(handle)
       setNeedAuth(false)
       await refreshList(handle)
-      setStatus(`工作区：${handle.name}`)
+      setStatus(`${t('workspacePrefix')}${handle.name}`)
     } catch (e) {
       if ((e as DOMException)?.name === 'AbortError') return
       setError(String((e as Error)?.message || e))
@@ -119,7 +121,7 @@ export function HomePage(props: { navigate: (to: string) => void }) {
     if (!dir) return
     const perm = await ensurePermission(dir, 'readwrite')
     if (perm !== 'granted') {
-      setError('未获得目录读写权限')
+      setError(t('permDenied'))
       return
     }
     setNeedAuth(false)
@@ -140,31 +142,32 @@ export function HomePage(props: { navigate: (to: string) => void }) {
           <span className="logo">OO</span>
           <div>
             <div className="brand-name">office-web-local</div>
-            <div className="brand-sub">本地编辑 · 不连服务器</div>
+            <div className="brand-sub">{t('brandSub')}</div>
           </div>
         </div>
 
         <button type="button" className="nav-new" onClick={() => openNew('docx')}>
-          <span className="plus">+</span> 新建
+          <span className="plus">+</span> {t('navNew')}
         </button>
 
         <nav className="nav">
           <button type="button" className="nav-item active" onClick={() => navigate('/')}>
-            打开
+            {t('navOpen')}
           </button>
           {fsOk && (
             <button type="button" className="nav-item" onClick={() => void onPickDir()}>
-              本机文件夹
+              {t('navFolder')}
             </button>
           )}
           {needAuth && (
             <button type="button" className="nav-item" onClick={() => void onReauth()}>
-              重新授权
+              {t('navReauth')}
             </button>
           )}
         </nav>
 
         <div className="sider-foot">
+          <LanguageSwitcher />
           {dir && (
             <button
               type="button"
@@ -173,10 +176,10 @@ export function HomePage(props: { navigate: (to: string) => void }) {
                 void clearDirectoryHandle()
                 setDir(null)
                 setFiles([])
-                setStatus('已清除工作区')
+                setStatus(t('workspaceCleared'))
               }}
             >
-              清除工作区
+              {t('navClearWorkspace')}
             </button>
           )}
         </div>
@@ -184,15 +187,15 @@ export function HomePage(props: { navigate: (to: string) => void }) {
 
       <main className="main-pane">
         <div className="quick-types">
-          {NEW_TYPES.map((t) => (
+          {NEW_TYPES.map((item) => (
             <button
-              key={t.ext}
+              key={item.ext}
               type="button"
-              className={`type-chip ${t.cls}`}
-              title={`新建 ${t.label}`}
-              onClick={() => openNew(t.ext)}
+              className={`type-chip ${item.cls}`}
+              title={`${t('navNew')} ${t(item.key)}`}
+              onClick={() => openNew(item.ext)}
             >
-              {t.ext === 'docx' ? 'W' : t.ext === 'xlsx' ? 'X' : t.ext === 'pptx' ? 'P' : 'PDF'}
+              {item.ext === 'docx' ? 'W' : item.ext === 'xlsx' ? 'X' : item.ext === 'pptx' ? 'P' : 'PDF'}
             </button>
           ))}
         </div>
@@ -220,20 +223,20 @@ export function HomePage(props: { navigate: (to: string) => void }) {
             }}
           />
           <div className="drop-icon">↑</div>
-          <h3>选择文件</h3>
-          <p>将 Office 文档拖放到此处，或点击从计算机浏览</p>
+          <h3>{t('dropTitle')}</h3>
+          <p>{t('dropHint')}</p>
           <p className="formats">Supports: DOCX, DOC, XLSX, XLS, PPTX, PPT, PDF</p>
         </label>
 
         <section className="block">
-          <h2>新建</h2>
+          <h2>{t('sectionNew')}</h2>
           <div className="new-grid">
-            {NEW_TYPES.map((t) => (
-              <button key={t.ext} type="button" className="new-card" onClick={() => openNew(t.ext)}>
-                <span className={`type-icon ${t.cls}`}>
-                  {t.ext === 'docx' ? 'W' : t.ext === 'xlsx' ? 'X' : t.ext === 'pptx' ? 'P' : 'PDF'}
+            {NEW_TYPES.map((item) => (
+              <button key={item.ext} type="button" className="new-card" onClick={() => openNew(item.ext)}>
+                <span className={`type-icon ${item.cls}`}>
+                  {item.ext === 'docx' ? 'W' : item.ext === 'xlsx' ? 'X' : item.ext === 'pptx' ? 'P' : 'PDF'}
                 </span>
-                <span>{t.label}</span>
+                <span>{t(item.key)}</span>
               </button>
             ))}
           </div>
@@ -241,18 +244,21 @@ export function HomePage(props: { navigate: (to: string) => void }) {
 
         <section className="block">
           <div className="block-head">
-            <h2>最近{dir ? ` · ${dir.name}` : ''}</h2>
+            <h2>
+              {t('sectionRecent')}
+              {dir ? ` · ${dir.name}` : ''}
+            </h2>
             {dir && (
               <button type="button" className="linkish" onClick={() => void refreshList(dir)}>
-                刷新
+                {t('refresh')}
               </button>
             )}
           </div>
           <div className="recent-list">
             {!files.length && (
               <div className="recent-empty">
-                <p>无最近文件</p>
-                <p className="mute">打开本机文件夹或拖入文件后，会出现在这里以便快速访问</p>
+                <p>{t('recentEmpty')}</p>
+                <p className="mute">{t('recentEmptyHint')}</p>
               </div>
             )}
             {files.map((f) => (
@@ -262,7 +268,17 @@ export function HomePage(props: { navigate: (to: string) => void }) {
                 className="recent-item"
                 onClick={() => void openWorkspaceFile(f)}
               >
-                <span className={`type-icon sm ${f.fileType === 'xlsx' || f.fileType === 'xls' ? 'cell' : f.fileType === 'pptx' || f.fileType === 'ppt' ? 'slide' : f.fileType === 'pdf' ? 'pdf' : 'word'}`}>
+                <span
+                  className={`type-icon sm ${
+                    f.fileType === 'xlsx' || f.fileType === 'xls'
+                      ? 'cell'
+                      : f.fileType === 'pptx' || f.fileType === 'ppt'
+                        ? 'slide'
+                        : f.fileType === 'pdf'
+                          ? 'pdf'
+                          : 'word'
+                  }`}
+                >
                   {f.fileType.slice(0, 3).toUpperCase()}
                 </span>
                 <span className="recent-meta">

@@ -4,29 +4,31 @@ import {
   createEditor,
   type OfficeEditor
 } from 'oo-offline'
+import { LanguageSwitcher, useLocale } from './i18n'
 import { clearPendingDoc, getPendingDoc, type PendingDoc } from './pendingDoc'
 import { writeFileBuffer } from './fs/workspace'
 import { parseEditorQuery } from './route'
 
 const BASE_URL = new URL(import.meta.env.BASE_URL || './', window.location.href).href
 
-function docFromPath(path: string): PendingDoc | null {
+function docFromPath(
+  path: string,
+  titles: { newDoc: string; doc: string }
+): PendingDoc | null {
   const q = parseEditorQuery(path.includes('?') ? path.slice(path.indexOf('?')) : '')
   if (!q) return null
   return {
-    title: q.isNew ? `新建文档.${q.fileType}` : `文档.${q.fileType}`,
+    title: q.isNew ? `${titles.newDoc}.${q.fileType}` : `${titles.doc}.${q.fileType}`,
     fileType: q.fileType,
     buffer: null,
     ephemeral: true
   }
 }
 
-/**
- * 同页 DocsAPI 直挂（对齐 onlyoffice-web-local DocumentHandler）：
- * new DocsAPI.DocEditor(divId, config)，不用 onlyoffice.html 外壳。
- */
+/** 同页 DocsAPI 直挂：createEditor → DocsAPI.DocEditor */
 export function EditorPage(props: { path: string; navigate: (to: string) => void }) {
   const { path, navigate } = props
+  const { t, editorLang } = useLocale()
   const mountRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<OfficeEditor | null>(null)
   const launchRef = useRef<PendingDoc | null>(null)
@@ -34,20 +36,24 @@ export function EditorPage(props: { path: string; navigate: (to: string) => void
 
   const [doc, setDoc] = useState<PendingDoc | null>(null)
   const [error, setError] = useState('')
-  const [status, setStatus] = useState('正在加载编辑器…')
+  const [status, setStatus] = useState(() => t('loadingEditor'))
   const [modified, setModified] = useState(false)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (!launchRef.current) {
-      launchRef.current = getPendingDoc() || docFromPath(path)
+      launchRef.current =
+        getPendingDoc() ||
+        docFromPath(path, { newDoc: t('newDocTitle'), doc: t('docTitle') })
     }
     const launch = launchRef.current
     if (!launch) {
-      setError('没有待打开的文档，请从首页新建或打开文件')
+      setError(t('noPendingDoc'))
       return
     }
     setDoc(launch)
+    setError('')
+    setStatus(t('loadingEditor'))
 
     const mount = mountRef.current
     if (!mount) return
@@ -72,12 +78,12 @@ export function EditorPage(props: { path: string; navigate: (to: string) => void
             key: `demo-${Date.now()}`,
             isForm: launch.fileType === 'pdf' ? false : undefined
           },
-          lang: 'zh-CN',
+          lang: editorLang,
           onReady: () => {
             clearPendingDoc()
-            setStatus('编辑器就绪')
+            setStatus(t('editorReady'))
           },
-          onDocumentReady: () => setStatus('文档已打开'),
+          onDocumentReady: () => setStatus(t('docOpened')),
           onStateChange: setModified,
           onError: (err) => setError(err.message),
           onRequestClose: () => navigate('/')
@@ -102,7 +108,7 @@ export function EditorPage(props: { path: string; navigate: (to: string) => void
         blobUrlRef.current = null
       }
     }
-  }, [path, navigate])
+  }, [path, navigate, editorLang, t])
 
   async function onSave() {
     const editor = editorRef.current
@@ -114,18 +120,18 @@ export function EditorPage(props: { path: string; navigate: (to: string) => void
       const result = await editor.save(active.fileType)
       if (active.handle) {
         await writeFileBuffer(active.handle, result.buffer)
-        setStatus(`已写回本机：${active.title}`)
+        setStatus(`${t('savedLocal')}${active.title}`)
       } else {
         const a = document.createElement('a')
         a.href = URL.createObjectURL(new Blob([result.buffer]))
         a.download = active.title
         a.click()
         URL.revokeObjectURL(a.href)
-        setStatus(`已下载 ${active.title}`)
+        setStatus(`${t('downloaded')}${active.title}`)
       }
       setModified(false)
     } catch (e) {
-      setError(`保存失败：${(e as Error)?.message || e}`)
+      setError(`${t('saveFailed')}${(e as Error)?.message || e}`)
     } finally {
       setSaving(false)
     }
@@ -135,13 +141,14 @@ export function EditorPage(props: { path: string; navigate: (to: string) => void
     <div className="editor-page">
       <div className="editor-bar">
         <button type="button" className="btn ghost" onClick={() => navigate('/')}>
-          ← 首页
+          {t('home')}
         </button>
         <span className={`dot${modified ? ' on' : ''}`} />
-        <span className="title">{doc?.title || '编辑器'}</span>
+        <span className="title">{doc?.title || t('editor')}</span>
         <span className="bar-status">{status}</span>
+        <LanguageSwitcher />
         <button type="button" className="btn primary" disabled={saving || !doc} onClick={() => void onSave()}>
-          {saving ? '保存中…' : '保存'}
+          {saving ? t('saving') : t('save')}
         </button>
       </div>
       {error && <div className="banner warn editor-err">{error}</div>}
