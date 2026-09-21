@@ -33,7 +33,8 @@ export interface EditorOverlaySession {
 }
 
 let saveSeq = 0
-const ONLYOFFICE_URL = new URL('../onlyoffice.html', import.meta.url).href
+const APP_BASE_URL = new URL(import.meta.env.BASE_URL || './', window.location.href)
+const ONLYOFFICE_URL = new URL('onlyoffice.html', APP_BASE_URL).href
 
 export function openEditorOverlay(options: OpenOverlayOptions): EditorOverlaySession {
   const mount = options.mount
