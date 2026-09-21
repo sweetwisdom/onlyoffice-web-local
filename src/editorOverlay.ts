@@ -33,13 +33,14 @@ export interface EditorOverlaySession {
 }
 
 let saveSeq = 0
+const ONLYOFFICE_URL = new URL('../onlyoffice.html', import.meta.url).href
 
 export function openEditorOverlay(options: OpenOverlayOptions): EditorOverlaySession {
   const mount = options.mount
   mount.innerHTML = ''
 
   const frame = document.createElement('iframe')
-  frame.src = '/onlyoffice.html'
+  frame.src = ONLYOFFICE_URL
   frame.title = options.title
   frame.setAttribute('allow', 'clipboard-read; clipboard-write; fullscreen')
   mount.appendChild(frame)

@@ -1,10 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
 
+const APP_BASE_PATH = new URL(import.meta.env.BASE_URL || './', window.location.href).pathname
+  .replace(/\/$/, '')
+
+function currentRoute(): string {
+  const pathname = window.location.pathname
+  const relativePath = APP_BASE_PATH && pathname.startsWith(APP_BASE_PATH)
+    ? pathname.slice(APP_BASE_PATH.length) || '/'
+    : pathname
+  return relativePath + window.location.search
+}
+
+function browserPath(route: string): string {
+  const normalized = route.startsWith('/') ? route : `/${route}`
+  return `${APP_BASE_PATH}${normalized}` || '/'
+}
+
 export function usePath() {
-  const [path, setPath] = useState(() => window.location.pathname + window.location.search)
+  const [path, setPath] = useState(currentRoute)
 
   useEffect(() => {
-    const onPop = () => setPath(window.location.pathname + window.location.search)
+    const onPop = () => setPath(currentRoute())
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
   }, [])
@@ -12,7 +28,7 @@ export function usePath() {
   const navigate = useMemo(
     () => (to: string) => {
       if (to === path) return
-      window.history.pushState(null, '', to)
+      window.history.pushState(null, '', browserPath(to))
       setPath(to)
     },
     [path]

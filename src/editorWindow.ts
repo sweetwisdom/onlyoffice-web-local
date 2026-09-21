@@ -36,9 +36,10 @@ export interface EditorWindowSession {
 }
 
 let saveSeq = 0
+const ONLYOFFICE_URL = new URL('../onlyoffice.html', import.meta.url).href
 
 export function openEditorInNewWindow(options: OpenInWindowOptions): EditorWindowSession {
-  const openedWindow = window.open('/onlyoffice.html', `oo-editor-${Date.now()}`)
+  const openedWindow = window.open(ONLYOFFICE_URL, `oo-editor-${Date.now()}`)
   if (!openedWindow) {
     throw new Error('无法打开新窗口（请允许弹窗，或用系统 Chrome 打开本页后再试）')
   }

@@ -8,7 +8,7 @@ import { clearPendingDoc, getPendingDoc, type PendingDoc } from './pendingDoc'
 import { writeFileBuffer } from './fs/workspace'
 import { parseEditorQuery } from './route'
 
-const BASE_URL = import.meta.env.BASE_URL || './'
+const BASE_URL = new URL('../', import.meta.url).href
 
 function docFromPath(path: string): PendingDoc | null {
   const q = parseEditorQuery(path.includes('?') ? path.slice(path.indexOf('?')) : '')
