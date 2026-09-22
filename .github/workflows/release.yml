@@ -1,27 +1,33 @@
-name: Build and Release
+name: Build, Deploy and Release
 
 on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       tag:
         description: 'Release tag (e.g. v1.0.0). Leave empty for auto-increment.'
         required: false
         type: string
-  push:
-    tags:
-      - 'v*'
+
+# 并发控制：同一 ref 上的多次推送只保留最新一次构建，避免重复打包 300MB+ 离线包
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-release:
+  # 构建只跑一次，产物 html.zip 通过 artifact 共享给下游两个 job
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
           cache: npm
@@ -42,19 +48,67 @@ jobs:
       - name: Package build output
         run: zip -r html.zip html
 
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-zip
+          path: html.zip
+          if-no-files-found: error
+
+  deploy-pages:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: html-zip
+
+      - name: Unzip site
+        run: unzip -q html.zip -d site
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./site/html
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: html-zip
+
       - name: Determine tag
         id: tag
+        # 通过 env 传值，避免 workflow_dispatch 输入直接拼进 shell 造成脚本注入
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          GITHUB_REF: ${{ github.ref }}
         run: |
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "RELEASE_TAG=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
-            echo "RELEASE_TAG=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [ -n "${INPUT_TAG}" ]; then
+            echo "RELEASE_TAG=${INPUT_TAG}" >> "$GITHUB_OUTPUT"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "RELEASE_TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
-            echo "RELEASE_TAG=release-$(date +%Y%m%d-%H%M%S)" >> $GITHUB_OUTPUT
+            echo "RELEASE_TAG=release-${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag.outputs.RELEASE_TAG }}
           name: Release ${{ steps.tag.outputs.RELEASE_TAG }}
